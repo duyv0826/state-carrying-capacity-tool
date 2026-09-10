@@ -1,0 +1,601 @@
+openapi: 3.0.3
+info:
+  title: 状态承载量自测工具 API
+  version: 1.0.0
+  description: >
+    SCC (State-Carrying Capacity) Self-Assessment Tool API.
+    所有业务端点带 /api/v1/ 版本前缀。统一响应格式 { code, data, message }，code=0 表示成功。
+    计分与判档由服务端独立重算，不接受前端传来的计算结果。
+    采集开关 collection_enabled 为 false 时，写入端点不落库（见 ADR-004）。
+servers:
+  - url: https://{host}
+    variables:
+      host:
+        default: localhost
+        description: 部署域名（待备案问题确认后填入）
+
+tags:
+  - name: config
+    description: 运行时配置与档位基线
+  - name: collect
+    description: 匿名数据采集
+  - name: admin
+    description: 研究数据导出（需鉴权）
+
+paths:
+  /api/v1/config:
+    get:
+      tags: [config]
+      summary: 获取采集开关、知情同意版本与档位基线
+      description: >
+        前端启动时调用。collection_enabled=false 时前端必须完全停止发送数据，
+        但工具功能保持完整可用。
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 0
+                  data:
+                    $ref: '#/components/schemas/ConfigPayload'
+                  message:
+                    type: string
+                    example: ""
+
+  /api/v1/submissions:
+    post:
+      tags: [collect]
+      summary: 写入一条自测记录
+      description: >
+        服务端负责计算反转分、因子分、总分、档位与质量标记。
+        hp 为蜜罐字段，正常用户不可见；非空时服务端静默返回成功但不入库。
+        采集关闭时返回 code=3001 且不落库。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmissionRequest'
+      responses:
+        '201':
+          description: 写入成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 0
+                  data:
+                    $ref: '#/components/schemas/SubmissionResult'
+                  message:
+                    type: string
+                    example: ""
+        '400':
+          $ref: '#/components/responses/ClientError'
+        '429':
+          description: 触发限流
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '200':
+          description: 采集已关闭（code=3001），未落库
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/abandon:
+    post:
+      tags: [collect]
+      summary: 记录中途放弃发生在第几题
+      description: 用于问卷设计诊断。受 collection_enabled 统一管控。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id, schema_version, last_question_index]
+              properties:
+                session_id:
+                  type: string
+                  format: uuid
+                schema_version:
+                  type: integer
+                  example: 2
+                software_name:
+                  type: string
+                  maxLength: 60
+                last_question_index:
+                  type: integer
+                  minimum: 0
+                  example: 4
+                duration_ms:
+                  type: integer
+                  minimum: 0
+                hp:
+                  type: string
+                  maxLength: 0
+                  description: 蜜罐字段，必须为空字符串
+      responses:
+        '201':
+          description: 写入成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 0
+
+  /api/v1/followups:
+    post:
+      tags: [collect]
+      summary: 登记 6 个月回访联系方式
+      description: >
+        写入物理分表 followups，仅通过客户端生成的随机 token 关联。
+        联系方式在服务端加密存储。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [followup_token, contact, consent_version]
+              properties:
+                followup_token:
+                  type: string
+                  pattern: '^[0-9a-f]{32}$'
+                  description: 客户端生成的 32 位随机 hex
+                contact:
+                  type: string
+                  maxLength: 120
+                band:
+                  type: string
+                  enum: [high_risk, watch, safe]
+                consent_version:
+                  type: string
+                  example: v1.0-2026-09
+      responses:
+        '201':
+          description: 登记成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 0
+
+  /api/v1/admin/export:
+    get:
+      tags: [admin]
+      summary: 导出研究数据（CSV / JSON）
+      description: >
+        默认排除 followup_token 与 id 列（改用 record_id 短码），
+        以确保导出数据集不含任何可用于跨表还原身份的关联键。
+        CSV 输出强制带 UTF-8 BOM，避免 Excel 打开中文乱码。
+      security:
+        - AdminToken: []
+      parameters:
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [csv, json]
+            default: csv
+        - name: shape
+          in: query
+          description: wide=一行一次自测一题一列（SPSS 友好）；long=tidy 长表（R/Python 友好）
+          schema:
+            type: string
+            enum: [wide, long]
+            default: wide
+        - name: schema_version
+          in: query
+          description: 按题单版本过滤；不传则导出全部
+          schema:
+            type: integer
+        - name: include_excluded
+          in: query
+          description: 是否包含分析阶段标记为剔除的记录
+          schema:
+            type: boolean
+            default: false
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: 导出成功
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SubmissionRecord'
+        '401':
+          description: 管理员令牌无效（code=4001）
+
+  /api/v1/admin/codebook:
+    get:
+      tags: [admin]
+      summary: 导出字段字典（变量名 / 类型 / 取值标签）
+      description: 供 SPSS 批量设置变量标签与值标签，避免手工录入。
+      security:
+        - AdminToken: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 0
+                  data:
+                    type: object
+                    properties:
+                      schema_version:
+                        type: integer
+                      variables:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/CodebookVariable'
+        '401':
+          description: 管理员令牌无效
+
+components:
+
+  securitySchemes:
+    AdminToken:
+      type: apiKey
+      in: header
+      name: X-Admin-Token
+
+  responses:
+    ClientError:
+      description: 请求体校验失败（code=1001/1002）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+
+    ConfigPayload:
+      type: object
+      properties:
+        collection_enabled:
+          type: boolean
+          description: false 时前端必须完全停止发送数据
+        consent_version:
+          type: string
+          example: v1.0-2026-09
+        consent_mode:
+          type: string
+          enum: [implied, explicit]
+        schema_version:
+          type: integer
+          example: 2
+        max_score:
+          type: integer
+          example: 45
+        calibration:
+          $ref: '#/components/schemas/Calibration'
+        total_count:
+          type: integer
+          description: 当前后端样本量，用于前端展示与 n_at_scoring
+
+    Calibration:
+      type: object
+      properties:
+        method:
+          type: string
+          enum: [prior, empirical_p33p67, kmeans]
+        n:
+          type: integer
+        p33:
+          type: number
+          format: float
+        p67:
+          type: number
+          format: float
+        cutpoints:
+          type: array
+          description: k-means 校准后的绝对切点，仅 method=kmeans 时存在
+          items:
+            type: number
+        computed_at:
+          type: string
+          format: date-time
+
+    AnswerKey:
+      type: string
+      description: 题目编号。反向题为 A2、B1、B3
+      enum: [A1, A2, A3, B1, B2, B3, C1, C2, C3]
+
+    Answers:
+      type: object
+      description: 9 题原始分。若最终采用 8 题（schema_version=1），C3 不存在
+      required: [A1, A2, A3, B1, B2, B3, C1, C2]
+      properties:
+        A1: { type: integer, minimum: 1, maximum: 5 }
+        A2: { type: integer, minimum: 1, maximum: 5 }
+        A3: { type: integer, minimum: 1, maximum: 5 }
+        B1: { type: integer, minimum: 1, maximum: 5 }
+        B2: { type: integer, minimum: 1, maximum: 5 }
+        B3: { type: integer, minimum: 1, maximum: 5 }
+        C1: { type: integer, minimum: 1, maximum: 5 }
+        C2: { type: integer, minimum: 1, maximum: 5 }
+        C3: { type: integer, minimum: 1, maximum: 5 }
+
+    Strata:
+      type: object
+      description: 分层/调节题，不计入总分
+      required: [S1, S2, S3]
+      properties:
+        S1:
+          type: string
+          enum: [A, B, C]
+          description: 学习成本形态。A=记位置 B=一半一半 C=练判断力
+        S2:
+          type: string
+          enum: [lt6m, 6m_2y, 2y_5y, gt5y]
+          description: >-
+            使用年限分档。有序类别，半开区间，无重叠无空隙：
+            lt6m = 不足 6 个月；6m_2y = 满 6 个月且不足 2 年；2y_5y = 满 2 年且不足 5 年；gt5y = 满 5 年及以上。
+            切法依据 —— 下限必须单独切出 lt6m，用于剔除"用了三天就来打分"的噪声样本（PRD 6.4 锚定题的第
+            一用途）；长端在 2y 与 5y 各切一刀，否则 A3（时间复利）的剂量-反应在 3 年以上区间被压平，
+            回归中看不到单调趋势。之所以是四档不是三档也不是五档：三档（lt1y / 1-3y / gt3y）长端分辨率
+            不足；五档则因为 S2 的用途是组间比较（ANOVA / 分组回归），在 200 人 x 人均 3 个软件的样本量下
+            每格需约 30 条才有效力，四档已是上限。
+            约束：切法随 schema_version 锁定，任何边界调整必须升 schema_version，不得原地改写语义。
+          example: 2y_5y
+        S3:
+          type: string
+          enum: [daily, weekly_multi, weekly_once, monthly, rarer]
+          description: >-
+            每周使用频次分档。有序类别，无重叠无空隙：
+            daily = 每周 5 天及以上；weekly_multi = 每周 2 至 4 次；weekly_once = 每周约 1 次；
+            monthly = 每月 1 至 3 次；rarer = 数月一次或更少。
+            切法依据 —— S3 的用途是效度校验（与 A 因子得分做 Spearman 相关），按有序编码整体参与，
+            不做 S2 x S3 的格子交互，因此不受"每格 30 条"的样本量约束，档数越多分辨率越高，可以吃到五档。
+            中段保留 weekly_multi 与 weekly_once 两档而不合并，是因为每周 1 次与每周 4 次的强度差达 4 倍，
+            合并进同一档会显著削弱效度校验的敏感度。边界取"每周 5 天及以上"而非"每天都用"，
+            用于收下"工作日每天用、周末不用"这一最常见的真实频次形态。
+            约束：切法随 schema_version 锁定，任何边界调整必须升 schema_version，不得原地改写语义。
+          example: daily
+        S4:
+          type: string
+          enum: [self, mandated]
+          description: 自选 / 被动使用（选做）
+
+    SubmissionRequest:
+      type: object
+      required:
+        - session_id
+        - schema_version
+        - software_name
+        - software_category
+        - answers
+        - strata
+        - duration_ms
+        - sequence_index
+        - device_type
+        - consent_version
+        - consent_mode
+      properties:
+        session_id:
+          type: string
+          format: uuid
+          description: 客户端生成，存 sessionStorage，不跨会话追踪
+        schema_version:
+          type: integer
+          example: 2
+        software_name:
+          type: string
+          maxLength: 60
+        software_category:
+          type: string
+          enum: [design, video, 3d, doc, code, sheet, note, audio, other]
+        is_custom_input:
+          type: boolean
+          default: false
+        answers:
+          $ref: '#/components/schemas/Answers'
+        strata:
+          $ref: '#/components/schemas/Strata'
+        region_bucket:
+          type: string
+          nullable: true
+          description: 被试自愿填写，不从 IP 推断。不填为 null
+        duration_ms:
+          type: integer
+          minimum: 0
+        sequence_index:
+          type: integer
+          minimum: 1
+          description: 本 session 内第几次自测
+        device_type:
+          type: string
+          enum: [mobile, desktop]
+          description: 前端粗判上报，服务端从不读取 UA
+        ua_family:
+          type: string
+          enum: [wechat, safari_mobile, other]
+          nullable: true
+        source:
+          type: string
+          nullable: true
+          description: 渠道标记，渠道级非个体级
+        client_submitted_at:
+          type: string
+          format: date-time
+          nullable: true
+        consent_version:
+          type: string
+          example: v1.0-2026-09
+        consent_mode:
+          type: string
+          enum: [implied, explicit]
+        feedback_text:
+          type: string
+          maxLength: 500
+          nullable: true
+        followup_token:
+          type: string
+          pattern: '^[0-9a-f]{32}$'
+          nullable: true
+        hp:
+          type: string
+          maxLength: 0
+          description: 蜜罐字段，必须为空字符串
+
+    SubmissionResult:
+      type: object
+      description: 服务端重算后的结果，用于前端校验自身计算是否一致
+      properties:
+        record_id:
+          type: string
+        total_score:
+          type: integer
+          example: 33
+        band:
+          type: string
+          enum: [high_risk, watch, safe]
+        band_basis:
+          type: string
+          enum: [prior, empirical_p33p67, kmeans]
+        n_at_scoring:
+          type: integer
+        quality_flags:
+          type: array
+          items:
+            type: string
+            enum: [straightlining, rapid, duplicate_software, invalid_name]
+
+    SubmissionRecord:
+      type: object
+      description: 导出用完整记录。不含 id、不含 followup_token
+      properties:
+        record_id: { type: string }
+        session_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        client_submitted_at: { type: string, format: date-time, nullable: true }
+        schema_version: { type: integer }
+        max_score: { type: integer }
+        consent_version: { type: string }
+        consent_mode: { type: string }
+        software_name: { type: string }
+        software_name_norm: { type: string }
+        software_category: { type: string }
+        is_custom_input: { type: boolean }
+        q_a1_raw: { type: integer }
+        q_a1_scored: { type: integer }
+        q_a2_raw: { type: integer }
+        q_a2_scored: { type: integer }
+        q_a3_raw: { type: integer }
+        q_a3_scored: { type: integer }
+        q_b1_raw: { type: integer }
+        q_b1_scored: { type: integer }
+        q_b2_raw: { type: integer }
+        q_b2_scored: { type: integer }
+        q_b3_raw: { type: integer }
+        q_b3_scored: { type: integer }
+        q_c1_raw: { type: integer }
+        q_c1_scored: { type: integer }
+        q_c2_raw: { type: integer }
+        q_c2_scored: { type: integer }
+        q_c3_raw: { type: integer, nullable: true }
+        q_c3_scored: { type: integer, nullable: true }
+        factor_a_score: { type: integer }
+        factor_b_score: { type: integer }
+        factor_c_score: { type: integer }
+        total_score: { type: integer }
+        band: { type: string }
+        band_basis: { type: string }
+        n_at_scoring: { type: integer }
+        s1_learning_type: { type: string }
+        s2_tenure_bucket: { type: string }
+        s3_frequency_bucket: { type: string }
+        s4_adoption_type: { type: string, nullable: true }
+        duration_ms: { type: integer }
+        device_type: { type: string }
+        ua_family: { type: string, nullable: true }
+        source: { type: string, nullable: true }
+        region_bucket: { type: string, nullable: true }
+        sequence_index: { type: integer }
+        straightlining_flag: { type: boolean }
+        rapid_flag: { type: boolean }
+        quality_flags: { type: array, items: { type: string } }
+        feedback_text: { type: string, nullable: true }
+        excluded: { type: boolean }
+
+    CodebookVariable:
+      type: object
+      properties:
+        name:
+          type: string
+          example: q_a1_raw
+        label:
+          type: string
+          example: A1 状态沉淀（原始分）
+        type:
+          type: string
+          enum: [numeric, string, boolean]
+        scale:
+          type: string
+          description: SPSS 度量标准
+          enum: [nominal, ordinal, scale]
+        values:
+          type: array
+          description: 值标签
+          items:
+            type: object
+            properties:
+              value: { type: integer }
+              label: { type: string }
+        reverse_coded:
+          type: boolean
+          description: 是否为反向题
+
+    ErrorResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          description: >
+            1001 请求体校验失败 / 1002 软件名非法 /
+            2001 触发限流 / 2002 蜜罐命中 /
+            3001 采集已关闭 / 4001 管理员令牌无效 / 5001 服务端内部错误
+          example: 1001
+        data:
+          type: object
+          nullable: true
+        message:
+          type: string
+          example: ""

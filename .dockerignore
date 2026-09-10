@@ -1,0 +1,12 @@
+.git
+.workbuddy
+node_modules
+**/node_modules
+dist
+**/dist
+*.log
+.env
+.env.*
+**/.env
+**/.env.*
+server/data
