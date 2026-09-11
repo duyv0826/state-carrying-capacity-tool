@@ -152,7 +152,7 @@ curl http://localhost:3000/healthz     # → {"ok":true}
 
 ## License
 
-[待填写：请作者补充开源协议（如 MIT）或保留所有权利声明]
+MIT —— 详见仓库根目录 [`LICENSE`](./LICENSE)。
 
 ---
 
