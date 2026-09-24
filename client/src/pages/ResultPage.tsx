@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom';
+import { useEffect, useRef } from 'react';
 import { useSession } from '../store/session';
 import { STEPS, TOTAL_STEPS } from '../config/flow.steps';
 import { ANSWER_KEYS, FACTOR_KEYS, FACTORS, type FactorKey } from '../config/questions';
@@ -14,6 +15,7 @@ import { Button } from '../components/Button';
 import { Callout } from '../components/Callout';
 import { PageLayout } from '../components/PageLayout';
 import { exportShareCard } from '../lib/shareCard';
+import { useCapacityHistory } from '../lib/useCapacityHistory';
 import { Download, RotateCcw } from 'lucide-react';
 
 const FACTOR_NOTE: Record<FactorKey, string> = {
@@ -25,6 +27,8 @@ const FACTOR_NOTE: Record<FactorKey, string> = {
 export function ResultPage() {
   const navigate = useNavigate();
   const { state, config, startNewAssessment } = useSession();
+  const { saveResult, history, clear } = useCapacityHistory();
+  const savedKeyRef = useRef<string>('');
 
   const resultStep = STEPS[TOTAL_STEPS - 1];
   const answered = ANSWER_KEYS.some((k) => typeof state.answers[k] === 'number');
@@ -64,6 +68,25 @@ export function ResultPage() {
   }
 
   const softwareName = state.software?.raw ?? (state.softwareInput || '未命名软件');
+
+  // 本地留存：同一份作答只存一次（按 sessionId + sequenceIndex 去重）
+  useEffect(() => {
+    if (!answered || !result.complete) return;
+    const key = `${state.sessionId}#${state.sequenceIndex}`;
+    if (savedKeyRef.current === key) return;
+    savedKeyRef.current = key;
+    saveResult({
+      totalScore: result.total,
+      normalized: result.normalized,
+      band,
+      factorMeans: {
+        A: result.factors.A.mean,
+        B: result.factors.B.mean,
+        C: result.factors.C.mean,
+      },
+      software: softwareName,
+    });
+  }, [answered, result.complete, state.sessionId, state.sequenceIndex, band, result, saveResult, softwareName]);
 
   const handleExport = () => {
     exportShareCard({
@@ -120,6 +143,26 @@ export function ResultPage() {
         <Callout tone="neutral" icon="info">
           {honestyNote}
         </Callout>
+
+        {history.length > 0 && (
+          <div className="flex flex-col gap-xs rounded-md border border-line bg-surface p-md">
+            <p className="font-emphasis text-sm text-ink-secondary">
+              本机历史（仅存于此设备，未上传服务器）
+            </p>
+            <p className="font-mono text-md tabular text-ink-secondary">
+              已留存 {history.length} 次 · 最近一次：
+              {BAND_META[history[history.length - 1].band].label} ·{' '}
+              {history[history.length - 1].totalScore}/45
+            </p>
+            <button
+              type="button"
+              className="text-sm text-ink-tertiary underline"
+              onClick={clear}
+            >
+              清空本机记录
+            </button>
+          </div>
+        )}
 
         <div className="flex flex-col gap-sm sm:flex-row">
           <Button
