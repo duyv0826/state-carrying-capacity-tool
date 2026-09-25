@@ -27,6 +27,8 @@ export interface SessionState {
   strata: Strata;
   startedAt: number;
   sequenceIndex: number;
+  /** 最近一次成功提交的 record_id（结果找回令牌）。采集关闭时为 null。 */
+  lastRecordId: string | null;
 }
 
 function initialState(): SessionState {
@@ -39,6 +41,7 @@ function initialState(): SessionState {
     strata: {},
     startedAt: Date.now(),
     sequenceIndex: 1,
+    lastRecordId: null,
   };
 }
 
@@ -57,6 +60,7 @@ function loadPersisted(): SessionState | null {
       strata: parsed.strata ?? {},
       startedAt: parsed.startedAt ?? Date.now(),
       sequenceIndex: parsed.sequenceIndex ?? 1,
+      lastRecordId: parsed.lastRecordId ?? null,
     };
   } catch {
     return null;
@@ -73,6 +77,7 @@ export interface SessionContextValue {
   setConsent: (value: boolean) => void;
   setAnswer: (key: AnswerKey, value: number) => void;
   setStratum: (key: StrataKey, value: string) => void;
+  setLastRecordId: (value: string | null) => void;
   startNewAssessment: () => void;
 }
 
@@ -127,6 +132,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setState((prev) => ({ ...prev, strata: { ...prev.strata, [key]: value } }));
   }, []);
 
+  const setLastRecordId = useCallback((value: string | null) => {
+    setState((prev) => ({ ...prev, lastRecordId: value }));
+  }, []);
+
   /** 同一 session 内连测第二个软件：清空答案保留 sessionId，sequence_index +1。 */
   const startNewAssessment = useCallback(() => {
     setState((prev) => ({
@@ -151,6 +160,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setConsent,
       setAnswer,
       setStratum,
+      setLastRecordId,
       startNewAssessment,
     }),
     [
@@ -163,6 +173,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setConsent,
       setAnswer,
       setStratum,
+      setLastRecordId,
       startNewAssessment,
     ],
   );

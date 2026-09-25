@@ -92,6 +92,48 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /api/v1/submissions/{recordId}:
+    get:
+      tags: [retrieve]
+      summary: 凭令牌找回一条结果（结果检索链接）
+      description: >
+        用户提交后获得 record_id 令牌（POST 响应返回）。凭此令牌可事后取回结果，
+        用于跨设备 / 清缓存后查看，无需账号、不引入身份标识（符合 SPEC 匿名最小化原则）。
+        采集关闭（collection_enabled=false）时返回 code=3001（HTTP 200，data=null）；
+        令牌不存在或已排除时返回 code=4040（HTTP 404，data=null）。
+        响应仅含结果展示字段，不含任何可识别信息（AC-10）。
+      parameters:
+        - name: recordId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: 提交时返回的公钥令牌（R + 8 位 hex，由服务端 UUID 单向派生）
+      responses:
+        '200':
+          description: 取回成功（code=0，data 为结果视图）；或采集已关闭（code=3001，data=null）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 0
+                  data:
+                    $ref: '#/components/schemas/SubmissionLookup'
+                  message:
+                    type: string
+                    example: ""
+        '400':
+          $ref: '#/components/responses/ClientError'
+        '404':
+          description: 令牌不存在或已排除（code=4040），data=null
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /api/v1/abandon:
     post:
       tags: [collect]
@@ -497,6 +539,53 @@ components:
           items:
             type: string
             enum: [straightlining, rapid, duplicate_software, invalid_name]
+
+    SubmissionLookup:
+      type: object
+      description: 结果找回视图（GET /api/v1/submissions/{recordId} 响应）。仅含展示字段，无 PII。
+      properties:
+        record_id:
+          type: string
+          description: 公钥令牌（R + 8 位 hex）
+        software_name:
+          type: string
+        software_category:
+          type: string
+          enum: [design, video, 3d, doc, code, sheet, note, audio, other]
+        factor_a_score:
+          type: integer
+          description: 因子 A 三题反转分之和（3–15），前端除以 3 得均值
+        factor_b_score:
+          type: integer
+        factor_c_score:
+          type: integer
+        total_score:
+          type: integer
+          description: 9–45
+        band:
+          type: string
+          enum: [high_risk, watch, safe]
+        band_basis:
+          type: string
+          enum: [prior, empirical_p33p67, kmeans]
+        n_at_scoring:
+          type: integer
+        s1_learning_type:
+          type: string
+          enum: [A, B, C]
+        s2_tenure_bucket:
+          type: string
+          enum: [lt6m, 6m_2y, 2y_5y, gt5y]
+        s3_frequency_bucket:
+          type: string
+          enum: [daily, weekly_multi, weekly_once, monthly, rarer]
+        s4_adoption_type:
+          type: string
+          enum: [self, mandated]
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
 
     SubmissionRecord:
       type: object

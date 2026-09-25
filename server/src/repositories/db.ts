@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import Database from 'better-sqlite3';
 import { loadConfig } from '../config/env.js';
-import { MIGRATIONS } from './migrations.js';
+import { MIGRATIONS, ensureRecordIdColumn } from './migrations.js';
 
 type Db = Database.Database;
 
@@ -24,6 +24,7 @@ export function getDb(): Db {
   for (const statement of MIGRATIONS) {
     db.exec(statement);
   }
+  ensureRecordIdColumn(db);
   instance = db;
   return instance;
 }

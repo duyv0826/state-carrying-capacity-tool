@@ -12,6 +12,7 @@ export const ERROR_CODES = {
   HONEYPOT: 2002,
   COLLECTION_DISABLED: 3001,
   ADMIN_TOKEN_INVALID: 4001,
+  RECORD_NOT_FOUND: 4040,
   INTERNAL: 5001,
 } as const;
 
@@ -54,6 +55,10 @@ export function collectionDisabledError(): AppError {
 
 export function adminTokenError(): AppError {
   return new AppError(ERROR_CODES.ADMIN_TOKEN_INVALID, 401, '管理员令牌无效');
+}
+
+export function recordNotFoundError(): AppError {
+  return new AppError(ERROR_CODES.RECORD_NOT_FOUND, 404, '未找到该结果记录');
 }
 
 export function internalError(): AppError {

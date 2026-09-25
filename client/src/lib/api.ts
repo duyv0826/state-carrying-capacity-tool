@@ -7,7 +7,7 @@
  * 根本不发任何请求；enabled 或 config 未知时才发，服务端 3001 仅为兜底、绝不入库。
  */
 
-import type { ConfigPayload, Envelope, SubmissionRequest, SubmissionResult } from '../types/api';
+import type { ConfigPayload, Envelope, SubmissionLookup, SubmissionRequest, SubmissionResult } from '../types/api';
 
 const BASE = '/api/v1';
 
@@ -62,6 +62,24 @@ export async function postSubmission(body: SubmissionRequest): Promise<SubmitOut
   });
   if (data === null) return { submitted: false, result: null, reason: 'collection_disabled' };
   return { submitted: true, result: data };
+}
+
+/**
+ * 结果找回：凭 record_id 从服务端取回结果视图。
+ * 采集关闭（HTTP 200 + code 3001，data=null）或令牌无效（HTTP 404，data=null）均返回 null，
+ * 由调用方决定展示空态，不抛异常。
+ */
+export async function fetchSubmission(recordId: string): Promise<SubmissionLookup | null> {
+  if (!recordId) return null;
+  try {
+    const res = await fetch(`${BASE}/submissions/${encodeURIComponent(recordId)}`);
+    if (!res.ok) return null;
+    const body = (await res.json()) as Envelope<SubmissionLookup | null>;
+    if (body.code !== 0 || !body.data) return null;
+    return body.data;
+  } catch {
+    return null;
+  }
 }
 
 export interface AbandonRequest {

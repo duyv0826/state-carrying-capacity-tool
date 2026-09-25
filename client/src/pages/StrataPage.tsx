@@ -14,7 +14,7 @@ import { PageLayout } from '../components/PageLayout';
 export function StrataPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { state, config, setStratum } = useSession();
+  const { state, config, setStratum, setLastRecordId } = useSession();
   const [submitting, setSubmitting] = useState(false);
 
   const step = stepByStrataId(id ?? '');
@@ -77,7 +77,13 @@ export function StrataPage() {
     };
 
     try {
-      await postSubmission(body);
+      const outcome = await postSubmission(body);
+      if (outcome.submitted && outcome.result?.record_id) {
+        setLastRecordId(outcome.result.record_id);
+        // 提交成功：跳转到结果找回链接（令牌即 record_id），可 bookmark / 分享
+        navigate(`/result/${outcome.result.record_id}`);
+        return;
+      }
     } catch {
       // 提交失败不影响结果展示：结果页完全本地计算（AC-09）
     } finally {

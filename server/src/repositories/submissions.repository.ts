@@ -1,10 +1,11 @@
 import { getDb } from './db.js';
 import { QUESTIONS } from '../domain/questions.js';
-import type { ExportFilter, SubmissionRow } from '../types/index.js';
+import type { ExportFilter, SubmissionLookupView, SubmissionRow } from '../types/index.js';
 
 /** 落库列清单：由题单派生，任何可识别字段（IP / UA 原文）都不在列内（AC-10）。 */
 export const SUBMISSION_COLUMNS: readonly string[] = [
   'id',
+  'record_id',
   'session_id',
   'created_at',
   'client_submitted_at',
@@ -114,4 +115,23 @@ export function hasSameSoftwareInSession(sessionId: string, softwareNameNorm: st
     )
     .get(sessionId, softwareNameNorm) as { hit: number } | undefined;
   return row !== undefined;
+}
+
+/**
+ * 结果找回：按公钥令牌 record_id 取回一条结果视图。
+ * 仅 SELECT 结果展示字段，不返回 IP/UA/自由文本等任何可识别信息（AC-10）。
+ * 旧库里 record_id 为 NULL 的历史行不会被命中（它们早于找回功能）。
+ */
+export function getByRecordId(recordId: string): SubmissionLookupView | undefined {
+  const row = getDb()
+    .prepare(
+      `SELECT record_id, software_name, software_category,
+              factor_a_score, factor_b_score, factor_c_score,
+              total_score, band, band_basis, n_at_scoring,
+              s1_learning_type, s2_tenure_bucket, s3_frequency_bucket, s4_adoption_type,
+              created_at
+       FROM submissions WHERE record_id = ? AND excluded = 0 LIMIT 1`,
+    )
+    .get(recordId) as SubmissionLookupView | undefined;
+  return row;
 }

@@ -80,4 +80,27 @@ export interface SubmissionResult {
   quality_flags: QualityFlag[];
 }
 
+/**
+ * 结果找回视图（GET /api/v1/submissions/:recordId 响应）。
+ * 与 server/src/types/index.ts 的 SubmissionLookupView 字段一致。
+ * 前端据此用 factor_score/3 复算因子均值、用 (total-9)/36 复算归一化，无需原始作答。
+ */
+export interface SubmissionLookup {
+  record_id: string;
+  software_name: string;
+  software_category: string;
+  factor_a_score: number;
+  factor_b_score: number;
+  factor_c_score: number;
+  total_score: number;
+  band: 'high_risk' | 'watch' | 'safe';
+  band_basis: BandBasis;
+  n_at_scoring: number;
+  s1_learning_type: 'A' | 'B' | 'C';
+  s2_tenure_bucket: 'lt6m' | '6m_2y' | '2y_5y' | 'gt5y';
+  s3_frequency_bucket: 'daily' | 'weekly_multi' | 'weekly_once' | 'monthly' | 'rarer';
+  s4_adoption_type: 'self' | 'mandated' | null;
+  created_at: string;
+}
+
 export type AnswerKeyOf = AnswerKey;

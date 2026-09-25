@@ -3,6 +3,8 @@
  * 隐私硬约束：任何表中都不存在 IP / UA 原文 / Cookie 等可识别字段（AC-10、ADR-008）。
  */
 
+import Database from 'better-sqlite3';
+
 function answerColumns(): string {
   const keys = ['a1', 'a2', 'a3', 'b1', 'b2', 'b3', 'c1', 'c2', 'c3'];
   return keys
@@ -16,6 +18,7 @@ function answerColumns(): string {
 const CREATE_SUBMISSIONS = `
 CREATE TABLE IF NOT EXISTS submissions (
     id TEXT PRIMARY KEY,
+    record_id TEXT,
     session_id TEXT NOT NULL,
     created_at TEXT NOT NULL,
     client_submitted_at TEXT,
@@ -103,3 +106,20 @@ export const MIGRATIONS: readonly string[] = [
   CREATE_CALIBRATION,
   ...INDEXES,
 ];
+
+/**
+ * 结果找回功能（GET /api/v1/submissions/:recordId）所需的列。
+ * record_id 由服务端 UUID 主键单向派生（sha256 前 8 位，见 utils/sanitize.ts），
+ * 因此客户端持有的令牌无法反推主键，必须落地存储才能按令牌取回。
+ * 该列也顺带满足 ADR-010：导出数据集用 record_id 而非主键 id。
+ * 旧库可能无此列，启动时用 pragma 探测后幂等追加，保证任何环境首次启动可用。
+ */
+export function ensureRecordIdColumn(db: Database.Database): void {
+  const has = db
+    .prepare("SELECT COUNT(*) AS c FROM pragma_table_info('submissions') WHERE name = 'record_id'")
+    .get() as { c: number };
+  if (has.c === 0) {
+    db.exec('ALTER TABLE submissions ADD COLUMN record_id TEXT');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_sub_record_id ON submissions(record_id)');
+  }
+}

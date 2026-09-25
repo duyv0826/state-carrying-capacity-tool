@@ -13,7 +13,7 @@ export function App() {
         <Route path="/q/:id" element={<QuestionPage />} />
         <Route path="/preview" element={<PreviewPage />} />
         <Route path="/s/:id" element={<StrataPage />} />
-        <Route path="/result/:sessionId" element={<ResultPage />} />
+        <Route path="/result/:token" element={<ResultPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

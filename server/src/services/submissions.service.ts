@@ -2,12 +2,14 @@ import { loadConfig } from '../config/env.js';
 import { resolveBand, type Band } from '../domain/bands.js';
 import { MAX_SCORE, QUESTIONS, SCHEMA_VERSION } from '../domain/questions.js';
 import {
+  getByRecordId,
   hasSameSoftwareInSession,
   insertSubmission,
   type SubmissionInsert,
 } from '../repositories/submissions.repository.js';
 import type {
   SubmissionInput,
+  SubmissionLookupView,
   SubmissionResultPayload,
 } from '../types/index.js';
 import { newId, isNameValid, normalizeSoftwareName, sanitizeSoftwareName, toRecordId } from '../utils/sanitize.js';
@@ -43,9 +45,11 @@ export function createSubmission(input: SubmissionInput): SubmissionResultPayloa
   });
 
   const id = newId();
+  const recordId = toRecordId(id);
   const createdAt = new Date().toISOString();
   const row: SubmissionInsert = {
     id,
+    record_id: recordId,
     session_id: input.sessionId,
     created_at: createdAt,
     client_submitted_at: input.clientSubmittedAt,
@@ -103,4 +107,13 @@ export function createSubmission(input: SubmissionInput): SubmissionResultPayloa
     n_at_scoring: n,
     quality_flags: flags,
   };
+}
+
+/**
+ * 结果找回（GET /api/v1/submissions/:recordId）。
+ * 按客户端持有的 record_id 取回结果视图；不存在返回 null（controller 层转 404）。
+ * 采集开关与限流在 route/中间件层统一处理，service 只负责"确认要查"的用例。
+ */
+export function getSubmissionByRecordId(recordId: string): SubmissionLookupView | null {
+  return getByRecordId(recordId) ?? null;
 }

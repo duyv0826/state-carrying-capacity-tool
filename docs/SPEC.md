@@ -203,3 +203,4 @@ sqlite3 data.db "SELECT * FROM submissions LIMIT 1;"
 | 2026-09-10 | 新增结果预览步 + 背景段进度降级 | 13 步顺序作答会击穿完成率（Typeform：>6 题完成率跌破 50%） | 页面清单、AC-03/04 |
 | 2026-09-10 | `Strata.S2/S3` 补 enum | 契约不收紧则脏数据入库，EFA 阶段才发现 | openapi、DB CHECK 约束 |
 | 2026-09-10 | `lucide-react` 1.37.0 → 1.43.0 | `npm view` 实测修正 | 技术架构表 |
+| 2026-09-25 | 实现「结果找回链接」（GET /api/v1/submissions/:recordId + 前端凭令牌服务端取数） | 落实页面清单已有的 `/result/:sessionId`：提交后返回 `record_id` 令牌，可 bookmark/分享事后取回；无账号、不引入身份标识，符合匿名最小化（§3 明确不做"账号体系"与"跨设备历史"仍成立） | 后端新增端点/迁移列 `record_id`、前端 ResultPage/StrataPage |

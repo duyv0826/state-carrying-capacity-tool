@@ -121,6 +121,29 @@ export interface SubmissionResultPayload {
   quality_flags: QualityFlag[];
 }
 
+/**
+ * 结果找回视图（GET /api/v1/submissions/:recordId 的响应）。
+ * 仅含结果展示所需字段，不含任何可识别字段（IP / UA 原文 / 自由文本等），符合 AC-10。
+ * 前端据此用 factor_score/3 复算因子均值、用 (total-9)/36 复算归一化，无需回传原始作答。
+ */
+export interface SubmissionLookupView {
+  record_id: string;
+  software_name: string;
+  software_category: SoftwareCategory;
+  factor_a_score: number;
+  factor_b_score: number;
+  factor_c_score: number;
+  total_score: number;
+  band: Band;
+  band_basis: BandBasis;
+  n_at_scoring: number;
+  s1_learning_type: StrataS1;
+  s2_tenure_bucket: StrataS2;
+  s3_frequency_bucket: StrataS3;
+  s4_adoption_type: StrataS4 | null;
+  created_at: string;
+}
+
 export interface ScoreResult {
   scored: AnswerMap;
   factors: Record<FactorKey, number>;
