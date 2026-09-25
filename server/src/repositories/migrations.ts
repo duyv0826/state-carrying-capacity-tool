@@ -3,7 +3,7 @@
  * 隐私硬约束：任何表中都不存在 IP / UA 原文 / Cookie 等可识别字段（AC-10、ADR-008）。
  */
 
-import Database from 'better-sqlite3';
+import type Database from 'better-sqlite3';
 
 function answerColumns(): string {
   const keys = ['a1', 'a2', 'a3', 'b1', 'b2', 'b3', 'c1', 'c2', 'c3'];

@@ -74,8 +74,20 @@ docker run -d -p 3000:3000 --name scc scc
 - 当前未做多语言界面。
 - 开启数据采集前需先完成所在院校 IRB 备案。
 
+## 验证状态
+
+| 项目 | 命令 | 结果 |
+|------|------|------|
+| 后端单元测试 | `cd server && npm run test` | 28 passed / 0 failed |
+| 后端类型检查 + lint | `cd server && npm run typecheck && npm run lint` | 通过 |
+| **后端真机端到端** | `cd server && npm run e2e` | **11 项断言全过**（真实 dist 进程 + 真实 SQLite 文件） |
+| 前端单元测试 | `cd client && npm run test` | 12 passed |
+
+真机 E2E 覆盖：提交 201 与服务端算分、凭 `record_id` 取回、令牌不存在（404/4040）、采集关闭静默成功（200/3001）、进程重启后仍能取回（验证落盘）。
+
 ## 更新记录
 
+- **2026-09-26**：新增真机端到端验证脚本 `server/test/e2e-real.mjs`（`npm run e2e`），把此前"只在进程内 app 测过、未跑真机"的缺口补上。同时修正一条错误结论：better-sqlite3 在 Windows x64 有官方预编译二进制，**无需本地 VS 生成工具链**。
 - **2026-09-24**：新增「本机历史留存」——结果页自动在用户浏览器留存历次自测（按 `sessionId#sequenceIndex` 去重，每份作答仅存一次），并新增"本机历史"区块可查看最近一次与手动清空。实现见 `client/src/lib/useCapacityHistory.ts` 与 `client/src/pages/ResultPage.tsx`。
 
 ## 后续计划

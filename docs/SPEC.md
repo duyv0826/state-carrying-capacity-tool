@@ -47,7 +47,7 @@
 |------------|------|----------|
 | **AI 生成行动建议** | 用黑箱解释一个宣称可解释的量表，自毁方法论立场 | 永不（除非改为可审计的规则引擎） |
 | 用户注册 / 登录 / 账号体系 | 匿名采集，隐私最小化；引入账号即违反最小化原则 | 永不 |
-| 跨设备查看历史结果（`/result/:id` 可分享链接） | 需新增端点 + 引入身份标识，与匿名冲突 | 若 IRB 批准且样本量不足时评估 |
+| 跨设备查看历史结果（`/result/:id` 可分享链接） | 需引入身份标识，与匿名冲突 | 若 IRB 批准且样本量不足时评估。注：2026-09-26 已以**匿名 `record_id` 令牌**形式落地（见 §13），令牌单向派生、视图不含任何可识别字段，**不构成**此处禁止的"身份标识"方案 |
 | 软件库自动补全（接第三方软件数据库） | 依赖外部数据源，MVP ROI 不足 | v2.0 |
 | 社交分享 SDK / 一键转发 | 分享走 PNG 卡片，不需要 SDK | v2.0 |
 | 多维常模对比（同软件他人得分对比） | 需 N≥150 且分软件分层，MVP 样本不支持 | N≥150 后 |
@@ -192,6 +192,15 @@ curl -X POST http://localhost:3000/api/v1/submissions \
 # 8. 隐私错误流
 sqlite3 data.db "SELECT * FROM submissions LIMIT 1;"
 # 断言：结果中不含任何 IP 字段
+
+# 9. 真机端到端（替代上面 4-8 的手工步骤，已脚本化）
+cd server && npm run e2e
+# 断言：11 项全过，退出码 0。覆盖：
+#   提交 201 + 服务端算分 33/safe + record_id 令牌
+#   GET 取回 200，字段与提交一致，且视图不含 session_id / q_*_raw / feedback_text
+#   令牌不存在 404 + code 4040
+#   采集关闭时 POST/GET 均 200 + code 3001（静默成功、不外泄数据）
+#   进程重启后凭同一 record_id 仍可取回（验证落盘而非内存）
 ```
 
 ## 13. 变更记录
@@ -204,3 +213,5 @@ sqlite3 data.db "SELECT * FROM submissions LIMIT 1;"
 | 2026-09-10 | `Strata.S2/S3` 补 enum | 契约不收紧则脏数据入库，EFA 阶段才发现 | openapi、DB CHECK 约束 |
 | 2026-09-10 | `lucide-react` 1.37.0 → 1.43.0 | `npm view` 实测修正 | 技术架构表 |
 | 2026-09-25 | 实现「结果找回链接」（GET /api/v1/submissions/:recordId + 前端凭令牌服务端取数） | 落实页面清单已有的 `/result/:sessionId`：提交后返回 `record_id` 令牌，可 bookmark/分享事后取回；无账号、不引入身份标识，符合匿名最小化（§3 明确不做"账号体系"与"跨设备历史"仍成立） | 后端新增端点/迁移列 `record_id`、前端 ResultPage/StrataPage |
+| 2026-09-26 | 新增真机端到端脚本 `server/test/e2e-real.mjs` + `npm run e2e` | 单测（进程内 app）覆盖不到「dist 产物能否真起来、SQLite 是否真落盘、HTTP 链路是否通」；2026-09-25 交付时因此留下未验证缺口 | 新增脚本 1 个、package.json 加 `e2e` script、README 补「验证」章节、SPEC §12 补第 9 步 |
+| 2026-09-26 | 事实修正：better-sqlite3 在 Windows x64 **无需本地编译** | 此前记录称"无预编译二进制、原生模块构建受阻"——实测 `node_modules/better-sqlite3/prebuilds/win32-x64.node` 存在且可直接 require，真机 E2E 已跑通 | 撤销该错误结论；CI/部署文档不再需要 VS 生成工具链前提 |

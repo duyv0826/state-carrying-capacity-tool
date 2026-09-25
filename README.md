@@ -97,6 +97,25 @@ cd ../server && npm install && npm run build && npm start
 
 ---
 
+## 验证
+
+```bash
+# 后端：类型检查 + lint + 单元测试（进程内 app，临时库）
+cd server && npm run verify          # typecheck && lint && test
+
+# 后端：真机端到端（真实 dist 进程 + 真实 SQLite 文件）
+cd server && npm run e2e             # 先 build，再跑 test/e2e-real.mjs
+
+# 前端：单元测试 + lint
+cd client && npm run test && npm run lint
+```
+
+`npm run e2e` 覆盖提交成功流、凭 `record_id` 取回流、令牌不存在（404/4040）、
+采集关闭静默成功（200/3001）、进程重启后仍能取回（验证落盘）五组场景，共 11 项断言。
+它用临时目录建库、跑完自动清理，不会污染 `data/`。
+
+---
+
 ## Docker 部署（香港 / 新加坡轻量机）
 
 ```bash

@@ -29,4 +29,24 @@ export default tseslint.config(
       '@typescript-eslint/no-non-null-assertion': 'off',
     },
   },
+  {
+    // 真机 E2E 脚本：纯 Node ESM，不在 tsconfig 覆盖范围内，需显式声明 Node 全局。
+    files: ['test/**/*.mjs'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: {
+        process: 'readonly',
+        console: 'readonly',
+        fetch: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+        URL: 'readonly',
+      },
+    },
+    rules: {
+      // 脚本以 stdout 报告结论，属于有意的命令行输出，不受应用代码禁 console 约束。
+      'no-console': 'off',
+    },
+  },
 );
