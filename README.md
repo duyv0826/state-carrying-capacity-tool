@@ -1,5 +1,7 @@
 # 状态承载量自测工具 (State-Carrying Capacity Self-Assessment)
 
+[![CI](https://github.com/duyv0826/state-carrying-capacity-tool/actions/workflows/ci.yml/badge.svg)](https://github.com/duyv0826/state-carrying-capacity-tool/actions/workflows/ci.yml)
+
 > 澳门科技大学（MUST）人文艺术学院 · 互动媒体艺术 / 游戏设计方向 **学位作品配套数据采集 Web 应用**
 > 理论锚点：Rabardel (1995) *工具生成理论（instrumental genesis）* —— 提出"状态承载量"概念：工具保留意愿与其状态承载量正相关、与任务一次性程度负相关。
 
