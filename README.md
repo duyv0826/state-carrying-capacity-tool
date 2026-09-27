@@ -114,6 +114,18 @@ cd client && npm run test && npm run lint
 采集关闭静默成功（200/3001）、进程重启后仍能取回（验证落盘）五组场景，共 11 项断言。
 它用临时目录建库、跑完自动清理，不会污染 `data/`。
 
+### CI（GitHub Actions）
+
+`.github/workflows/ci.yml` 在每次 push / PR 到 main 时跑三个 job：
+
+| job | 内容 | 为什么必须跑 |
+|-----|------|-------------|
+| `server` | `npm run verify` + `npm run e2e` | 类型/lint/单测 + 真机端到端 |
+| `client` | lint + test + build | 前端零告警与可构建性 |
+| `docker` | 构建镜像 → 起容器 → `/healthz` → 提交 → 凭令牌取回 | **宿主机是 Windows 预编译 better-sqlite3，部署目标是 Linux 容器，ABI 不同**。镜像内能否真起来、能否落盘，只有这条 job 能证明 |
+
+本地 Docker Desktop 未启动时，`docker` job 只能在 CI 上验证（云端 runner）。
+
 ---
 
 ## Docker 部署（香港 / 新加坡轻量机）

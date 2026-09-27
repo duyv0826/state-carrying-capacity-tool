@@ -1,0 +1,144 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# 三条流水线对应三件事：
+#   server —— 类型/lint/单测 + 真机端到端（真实进程 + 真实 SQLite 文件）
+#   client —— lint + 单测 + 构建
+#   docker —— 真实镜像冒烟：容器内能否拉起、能否提交并凭 record_id 取回
+# Docker job 的意义：宿主机上 better-sqlite3 走的是 Windows 预编译二进制，
+# 部署目标是 Linux 容器，两者 ABI 不同，必须在 CI 里真的跑一遍才敢发布。
+
+jobs:
+  server:
+    name: server · verify + e2e
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 类型检查 + lint + 单元测试
+        run: npm run verify
+
+      - name: 真机端到端（dist 进程 + SQLite 落盘）
+        run: npm run e2e
+
+  client:
+    name: client · lint + test + build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: lint（零告警）
+        run: npm run lint
+
+      - name: 单元测试
+        run: npm run test
+
+      - name: 构建
+        run: npm run build
+
+  docker:
+    name: docker · 镜像内链路冒烟
+    runs-on: ubuntu-latest
+    needs: [server, client]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 构建镜像
+        run: docker build -t scc-ci .
+
+      - name: 启动容器（开启采集）
+        run: |
+          docker run -d --name scc-ci -p 3000:3000 \
+            -e COLLECTION_ENABLED=true \
+            -e CONSENT_VERSION=v1.0-2026-09 \
+            -e CONSENT_MODE=implied \
+            scc-ci
+
+      - name: 等待健康检查通过
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/healthz | grep -q '"ok":true'; then
+              echo "健康检查通过（第 ${i} 次探测）"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "健康检查超时，容器日志如下："
+          docker logs scc-ci
+          exit 1
+
+      - name: 容器内提交 + 凭 record_id 取回
+        run: |
+          set -e
+          RESP=$(curl -sS -X POST http://localhost:3000/api/v1/submissions \
+            -H 'Content-Type: application/json' \
+            -d '{
+                  "session_id":"8f14e45f-ceea-467a-9542-5b1c0a5f7d21",
+                  "schema_version":2,
+                  "software_name":"Figma",
+                  "software_category":"design",
+                  "is_custom_input":false,
+                  "answers":{"A1":4,"A2":3,"A3":5,"B1":2,"B2":3,"B3":4,"C1":5,"C2":4,"C3":3},
+                  "strata":{"S1":"C","S2":"2y_5y","S3":"daily","S4":"self"},
+                  "region_bucket":null,
+                  "duration_ms":38200,
+                  "sequence_index":1,
+                  "device_type":"desktop",
+                  "ua_family":null,
+                  "source":null,
+                  "client_submitted_at":"2026-09-28T03:00:00+08:00",
+                  "consent_version":"v1.0-2026-09",
+                  "consent_mode":"implied",
+                  "feedback_text":null,
+                  "followup_token":null,
+                  "hp":""
+                }')
+          echo "POST -> $RESP"
+          test "$(echo "$RESP" | jq -r '.data.total_score')" = "33"
+          test "$(echo "$RESP" | jq -r '.data.band')" = "safe"
+          RECORD_ID=$(echo "$RESP" | jq -r '.data.record_id')
+          test -n "$RECORD_ID" && test "$RECORD_ID" != "null"
+
+          GET=$(curl -sS "http://localhost:3000/api/v1/submissions/$RECORD_ID")
+          echo "GET  -> $GET"
+          test "$(echo "$GET" | jq -r '.data.total_score')" = "33"
+          test "$(echo "$GET" | jq -r '.data.software_name')" = "Figma"
+          echo "镜像内链路通过：提交 -> 令牌 -> 取回一致"
+
+      - name: 失败时输出容器日志
+        if: failure()
+        run: docker logs scc-ci
+
+      - name: 清理容器
+        if: always()
+        run: docker rm -f scc-ci || true
