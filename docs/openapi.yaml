@@ -1,12 +1,13 @@
 openapi: 3.0.3
 info:
   title: 状态承载量自测工具 API
-  version: 1.0.0
+  version: 2.0.0
   description: >
     SCC (State-Carrying Capacity) Self-Assessment Tool API.
     所有业务端点带 /api/v1/ 版本前缀。统一响应格式 { code, data, message }，code=0 表示成功。
     计分与判档由服务端独立重算，不接受前端传来的计算结果。
     采集开关 collection_enabled 为 false 时，写入端点不落库（见 ADR-004）。
+    v2.0 新增：纵向回访结果回传、研究看板聚合、同软件常模对比、回访调度、k-means 校准回写。
 servers:
   - url: https://{host}
     variables:
@@ -19,8 +20,10 @@ tags:
     description: 运行时配置与档位基线
   - name: collect
     description: 匿名数据采集
+  - name: followup
+    description: 纵向回访结果回传（公开，限流）
   - name: admin
-    description: 研究数据导出（需鉴权）
+    description: 研究数据导出、看板聚合、常模对比、回访调度（需鉴权）
 
 paths:
   /api/v1/config:
@@ -87,48 +90,6 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '200':
           description: 采集已关闭（code=3001），未落库
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
-  /api/v1/submissions/{recordId}:
-    get:
-      tags: [retrieve]
-      summary: 凭令牌找回一条结果（结果检索链接）
-      description: >
-        用户提交后获得 record_id 令牌（POST 响应返回）。凭此令牌可事后取回结果，
-        用于跨设备 / 清缓存后查看，无需账号、不引入身份标识（符合 SPEC 匿名最小化原则）。
-        采集关闭（collection_enabled=false）时返回 code=3001（HTTP 200，data=null）；
-        令牌不存在或已排除时返回 code=4040（HTTP 404，data=null）。
-        响应仅含结果展示字段，不含任何可识别信息（AC-10）。
-      parameters:
-        - name: recordId
-          in: path
-          required: true
-          schema:
-            type: string
-          description: 提交时返回的公钥令牌（R + 8 位 hex，由服务端 UUID 单向派生）
-      responses:
-        '200':
-          description: 取回成功（code=0，data 为结果视图）；或采集已关闭（code=3001，data=null）
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  code:
-                    type: integer
-                    example: 0
-                  data:
-                    $ref: '#/components/schemas/SubmissionLookup'
-                  message:
-                    type: string
-                    example: ""
-        '400':
-          $ref: '#/components/responses/ClientError'
-        '404':
-          description: 令牌不存在或已排除（code=4040），data=null
           content:
             application/json:
               schema:
@@ -310,6 +271,258 @@ paths:
         '401':
           description: 管理员令牌无效
 
+  /api/v1/followups/results:
+    post:
+      tags: [followup]
+      summary: 纵向回访复测结果回传
+      description: >
+        被试通过回访邮件链接带 token 回传复测。服务端校验 token 存在于 followups 表，
+        独立重算总分与档位（复用 scoring/banding），写入 follow_up_results。
+        不存软件名；纵向 delta 由研究者在受控导出中按 token 关联 submissions 得到。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FollowupResultRequest'
+      responses:
+        '201':
+          description: 回传成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 0
+                  data:
+                    $ref: '#/components/schemas/FollowupResult'
+                  message:
+                    type: string
+                    example: ""
+        '400':
+          $ref: '#/components/responses/ClientError'
+        '429':
+          description: 触发限流
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 回访 token 不存在或解密失败（code=5002）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/admin/dashboard/summary:
+    get:
+      tags: [admin]
+      summary: 研究看板聚合摘要
+      description: 计数、档位分布、近 30 日提交趋势、样本就绪度（N vs 30/150）、当前 calibration 方法。
+      security:
+        - AdminToken: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 0
+                  data:
+                    $ref: '#/components/schemas/DashboardSummary'
+                  message:
+                    type: string
+                    example: ""
+        '401':
+          description: 管理员令牌无效
+
+  /api/v1/admin/norms:
+    get:
+      tags: [admin]
+      summary: 同软件常模对比
+      description: 按 software_name 或 category 聚合均值/中位数/p25/p75/档位分布，并附全局基线。
+      security:
+        - AdminToken: []
+      parameters:
+        - name: software
+          in: query
+          description: 精确软件名（与 software_name_norm 匹配）
+          schema:
+            type: string
+        - name: category
+          in: query
+          description: 软件类别，与 software 二选一或同时使用
+          schema:
+            type: string
+            enum: [design, video, 3d, doc, code, sheet, note, audio, other]
+        - name: schema_version
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 0
+                  data:
+                    $ref: '#/components/schemas/NormComparison'
+                  message:
+                    type: string
+                    example: ""
+        '401':
+          description: 管理员令牌无效
+
+  /api/v1/admin/followups:
+    get:
+      tags: [admin]
+      summary: 回访登记列表（研究者视角）
+      description: >
+        token 仅返回后 4 位；不返回联系方式明文或密文。供看板展示与调度决策。
+      security:
+        - AdminToken: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [all, pending, contacted, responded]
+            default: all
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 0
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/FollowupAdminItem'
+                  message:
+                    type: string
+                    example: ""
+        '401':
+          description: 管理员令牌无效
+
+  /api/v1/admin/followups/dispatch:
+    post:
+      tags: [admin]
+      summary: 触发到期回访邮件发送
+      description: >
+        幂等：仅对 next_invite_at <= now 且 invite_count < 上限的登记发送；冷却期内不重发。
+        由部署层 cron/systemd timer 或 node-cron 兜底定时调用，也可研究者手动触发。
+      security:
+        - AdminToken: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                wave_number:
+                  type: integer
+                  minimum: 1
+                  default: 1
+                max_invites:
+                  type: integer
+                  minimum: 1
+                  default: 50
+      responses:
+        '200':
+          description: 发送完成
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 0
+                  data:
+                    $ref: '#/components/schemas/FollowupDispatchResult'
+                  message:
+                    type: string
+                    example: ""
+        '401':
+          description: 管理员令牌无效
+
+  /api/v1/admin/followups/results:
+    get:
+      tags: [admin]
+      summary: 纵向回访结果列表
+      description: 仅返回 token 后 4 位 + wave + 总分 + 档位 + 提交时间，不含联系方式；delta 由研究者受控导出关联。
+      security:
+        - AdminToken: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 0
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/FollowupResultItem'
+                  message:
+                    type: string
+                    example: ""
+        '401':
+          description: 管理员令牌无效
+
+  /api/v1/admin/calibration/kmeans:
+    post:
+      tags: [admin]
+      summary: （可选）进程内触发 k-means 切点回写
+      description: 与 scripts/calibrate-kmeans.ts 同一逻辑；仅当 N >= 150 时写入 method='kmeans' 行。
+      security:
+        - AdminToken: []
+      responses:
+        '200':
+          description: 校准完成（或样本不足跳过）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 0
+                  data:
+                    $ref: '#/components/schemas/KmeansRecalibrateResult'
+                  message:
+                    type: string
+                    example: ""
+        '401':
+          description: 管理员令牌无效
+
 components:
 
   securitySchemes:
@@ -357,7 +570,7 @@ components:
       properties:
         method:
           type: string
-          enum: [prior, empirical_p33p67, kmeans]
+          enum: [empirical, kmeans]
         n:
           type: integer
         p33:
@@ -540,53 +753,6 @@ components:
             type: string
             enum: [straightlining, rapid, duplicate_software, invalid_name]
 
-    SubmissionLookup:
-      type: object
-      description: 结果找回视图（GET /api/v1/submissions/{recordId} 响应）。仅含展示字段，无 PII。
-      properties:
-        record_id:
-          type: string
-          description: 公钥令牌（R + 8 位 hex）
-        software_name:
-          type: string
-        software_category:
-          type: string
-          enum: [design, video, 3d, doc, code, sheet, note, audio, other]
-        factor_a_score:
-          type: integer
-          description: 因子 A 三题反转分之和（3–15），前端除以 3 得均值
-        factor_b_score:
-          type: integer
-        factor_c_score:
-          type: integer
-        total_score:
-          type: integer
-          description: 9–45
-        band:
-          type: string
-          enum: [high_risk, watch, safe]
-        band_basis:
-          type: string
-          enum: [prior, empirical_p33p67, kmeans]
-        n_at_scoring:
-          type: integer
-        s1_learning_type:
-          type: string
-          enum: [A, B, C]
-        s2_tenure_bucket:
-          type: string
-          enum: [lt6m, 6m_2y, 2y_5y, gt5y]
-        s3_frequency_bucket:
-          type: string
-          enum: [daily, weekly_multi, weekly_once, monthly, rarer]
-        s4_adoption_type:
-          type: string
-          enum: [self, mandated]
-          nullable: true
-        created_at:
-          type: string
-          format: date-time
-
     SubmissionRecord:
       type: object
       description: 导出用完整记录。不含 id、不含 followup_token
@@ -680,7 +846,8 @@ components:
           description: >
             1001 请求体校验失败 / 1002 软件名非法 /
             2001 触发限流 / 2002 蜜罐命中 /
-            3001 采集已关闭 / 4001 管理员令牌无效 / 5001 服务端内部错误
+            3001 采集已关闭 / 4001 管理员令牌无效 / 5001 服务端内部错误 /
+            5002 回访 token 不存在或解密失败
           example: 1001
         data:
           type: object
@@ -688,3 +855,221 @@ components:
         message:
           type: string
           example: ""
+
+    FollowupResultRequest:
+      type: object
+      required: [followup_token, answers, consent_version, duration_ms]
+      properties:
+        followup_token:
+          type: string
+          pattern: '^[0-9a-f]{32}$'
+          description: 复用 v1.0 客户端生成的 32 位随机 hex
+        wave_number:
+          type: integer
+          minimum: 1
+          default: 1
+        answers:
+          $ref: '#/components/schemas/Answers'
+        consent_version:
+          type: string
+          example: v1.0-2026-09
+        client_submitted_at:
+          type: string
+          format: date-time
+          nullable: true
+        duration_ms:
+          type: integer
+          minimum: 0
+
+    FollowupResult:
+      type: object
+      properties:
+        record_id:
+          type: string
+        total_score:
+          type: integer
+          example: 33
+        band:
+          type: string
+          enum: [high_risk, watch, safe]
+
+    DashboardSummary:
+      type: object
+      properties:
+        total_count:
+          type: integer
+          description: 总样本 N（excluded=0 计入分析口径；与 calibration.n 口径一致）
+        weekly_new:
+          type: integer
+          description: 本周新增（created_at 近 7 日的 submissions 数；口径待 team-lead 确认：滚动 7 日或自然周）
+        ingestion_rate:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: 入库率 = 有效入库(excluded=0) / 已提交总数(submissions)；口径待 team-lead 确认
+        completion_rate:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: 完成率 = submissions / (submissions + abandon_events)；漏斗完成率
+        band_distribution:
+          type: object
+          properties:
+            high_risk: { type: integer }
+            watch: { type: integer }
+            safe: { type: integer }
+        daily_trend:
+          type: array
+          description: 近 30 日每日提交计数
+          items:
+            type: object
+            properties:
+              date: { type: string, format: date }
+              count: { type: integer }
+        readiness:
+          type: object
+          properties:
+            n: { type: integer }
+            min_for_empirical: { type: integer, example: 30 }
+            min_for_kmeans: { type: integer, example: 150 }
+            calibration_method: { type: string, enum: [empirical, kmeans] }
+        followup_counts:
+          type: object
+          properties:
+            registered: { type: integer }
+            responded: { type: integer }
+
+    NormComparison:
+      type: object
+      properties:
+        software:
+          type: string
+          nullable: true
+        category:
+          type: string
+          nullable: true
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/NormRow'
+        global:
+          $ref: '#/components/schemas/NormRow'
+        low_n:
+          type: boolean
+          description: 任一分组 n < 30 时为真（提醒小样本）
+
+    NormRow:
+      type: object
+      properties:
+        key:
+          type: string
+          description: 软件名或类别名
+        n:
+          type: integer
+        mean:
+          type: number
+          format: float
+        median:
+          type: number
+          format: float
+        p25:
+          type: number
+          format: float
+        p75:
+          type: number
+          format: float
+        band_distribution:
+          type: object
+          properties:
+            high_risk: { type: integer }
+            watch: { type: integer }
+            safe: { type: integer }
+
+    FollowupAdminItem:
+      type: object
+      properties:
+        token_last4:
+          type: string
+          description: followup_token 仅暴露后 4 位，不返回完整 token 或联系方式
+          example: "a1b2"
+        band:
+          type: string
+          enum: [high_risk, watch, safe]
+          nullable: true
+        contact_channel:
+          type: string
+          enum: [email, wechat, telegram]
+        created_at:
+          type: string
+          format: date-time
+        invite_count:
+          type: integer
+        last_invited_at:
+          type: string
+          format: date-time
+          nullable: true
+        next_invite_at:
+          type: string
+          format: date-time
+          nullable: true
+        results_count:
+          type: integer
+          description: 该 token 已回传的复测波次数
+
+    FollowupDispatchResult:
+      type: object
+      properties:
+        dispatched:
+          type: integer
+          description: 本次实际发送邮件数
+        skipped:
+          type: integer
+          description: 处于冷却期或已达上限未发送数
+        next_run_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    FollowupResultItem:
+      type: object
+      properties:
+        token_last4:
+          type: string
+        wave_number:
+          type: integer
+        total_score:
+          type: integer
+        band:
+          type: string
+          enum: [high_risk, watch, safe]
+        submitted_at:
+          type: string
+          format: date-time
+
+    KmeansRecalibrateResult:
+      type: object
+      properties:
+        applied:
+          type: boolean
+          description: false 表示样本量不足 150，未写入
+        n:
+          type: integer
+        cutpoints:
+          type: array
+          items:
+            type: number
+          nullable: true
+        p33:
+          type: number
+          format: float
+          nullable: true
+        p67:
+          type: number
+          format: float
+          nullable: true
+        computed_at:
+          type: string
+          format: date-time
+          nullable: true
