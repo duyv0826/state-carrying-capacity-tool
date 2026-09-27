@@ -17,7 +17,7 @@ on:
 jobs:
   server:
     name: server · verify + e2e
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: server
@@ -41,7 +41,7 @@ jobs:
 
   client:
     name: client · lint + test + build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: client
@@ -68,7 +68,7 @@ jobs:
 
   docker:
     name: docker · 镜像内链路冒烟
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [server, client]
     steps:
       - uses: actions/checkout@v7
